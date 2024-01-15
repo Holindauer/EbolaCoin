@@ -2,20 +2,34 @@
 pragma solidity ^0.8.13;
 
 import {ERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
+import {StructuredLinkedList} from "./StructuredLinkedList.sol";
 
 contract EbolaCoin is ERC20 {
     
     address public immutable owner;
 
-    /// @dev the code can be used to redeem tokens numRedemptions times before being reset
+    /// @dev the 'code' can be used to redeem tokens 'numRedemptions' times before being reset
     uint private code;
     uint8 private numRedemptions;
 
-    /// @dev resetTime is the time at which the owner most recently reset the code and number of redemptions
-    uint private resetTime;
+    /// @dev lastResetTime is the time at which the owner most recently reset the code and number of redemptions
+    uint private lastResetTime;
 
     /// @dev conversionRateETH is the number of tokens that can be purchased with 1 ETH
     uint public immutable conversionRateETH = 1000;
+
+    /**
+    * @notice the below linked list and mappings are being used to keep track of who has already redeemed the code.
+    * @dev When a user redeems the code, their address is mapped to true in the _hasRedeemedCode mapping and their
+    * address is added to the linked list. When the code is reset, the linked list is iterated through in order to
+    * reset the _hasRedeemedCode mapping. The linked list implementation uses a uint as a pointer/node value so the
+    * _nodesToAddresses mapping is used to map the node value to the address of the user who redeemed the code.
+    * @dev The linked list is being used in place of a dynamic array to save gas costs when iterating over the list.
+    */
+    using StructuredLinkedList for StructuredLinkedList.List;
+    StructuredLinkedList.List private _redeemedCodesList;
+    mapping(uint => address) private _nodesToAddresses;
+    mapping(address => bool) private _hasReedemedCode;
 
     /**
     * @notice EbolaCoin is constructed as an ERC20 token with the name "EbolaCoin" and the symbol "EBC"
@@ -37,7 +51,7 @@ contract EbolaCoin is ERC20 {
         numRedemptions = 1;
 
         // set resetTime to the current block timestamp
-        resetTime = block.timestamp;
+        lastResetTime = block.timestamp;
     }
 
     /// @notice Override decimals to be 6 instead of the default 18
@@ -51,13 +65,13 @@ contract EbolaCoin is ERC20 {
         _;
     }
 
-    /// @notice only owner function to mint mint more tokens to the contract
-    /// @dev new tokens are only minted to the contract, not to the owner. The only way for an 
-    /// externally owned account to recieve tokens is either by redeeming the code or by purchasing 
-    /// them.
+    /**
+    * @notice only owner function to mint mint more tokens to the contract
+    * @dev new tokens are only minted to the contract, not to the owner. The only way for an externally owned account 
+    * to recieve tokens is either by redeeming the code or by purchasing them.
+    * @param amount is the number of tokens to mint to the contract w/ 6 demicals already multipliedS
+     */
     function mint(uint256 amount) public onlyOwner {
-
-        // mint new tokens to the contract balance
         _mint(address(this), amount);
     }
 
@@ -69,8 +83,9 @@ contract EbolaCoin is ERC20 {
      */
     function setCode(uint256 _code, uint8 _numRedemptions) public onlyOwner{
 
+        // ensure a week has passed since the last time the code was reset
         require(
-            resetTime + 1 weeks < block.timestamp, 
+            lastResetTime + 1 weeks < block.timestamp, 
             "Code can only be reset once per week"
             );
 
@@ -79,7 +94,14 @@ contract EbolaCoin is ERC20 {
         numRedemptions = _numRedemptions;
 
         // set new resetTime
-        resetTime = block.timestamp;
+        lastResetTime = block.timestamp;
+
+        // reset the linked list and mapping
+        for (uint256 i = 0; i < _redeemedCodesList.size; i++) {
+            address redeemedAddress = _nodesToAddresses[i];
+
+            _hasReedemedCode[redeemedAddress] = false;
+        }
     }
 
     /// @notice anyone can redeem the code for 5 tokens while numRedemptions > 0
@@ -91,11 +113,27 @@ contract EbolaCoin is ERC20 {
         // ensure that the code has not been redeemed more than numRedemptions times
         require(numRedemptions > 0, "Code has been redeemed too many times");
 
+        // ensure that the caller has not already redeemed the code
+        require(_hasReedemedCode[msg.sender] == false, "Caller has already redeemed the code");
+
         // decrement the number of redemptions
         numRedemptions -= 1;
 
         // transfer 5 tokens to the caller
-        _transfer(address(this), msg.sender, 5 * (10 ** uint256(decimals())));   
+        _transfer(address(this), msg.sender, 5 * (10 ** uint256(decimals())));  
+
+        // set the caller as having redeemed the code
+        _hasReedemedCode[msg.sender] = true; 
+
+        // set the next node in the linked list to 1 + current size
+        uint256 nextNode = _redeemedCodesList.size + 1;
+
+        // add the caller to the linked list and map the node to the caller
+        require(
+            _redeemedCodesList.pushFront(nextNode),
+            "Failed to add caller to the linked list"
+            );
+        _nodesToAddresses[nextNode] = msg.sender;
     }
 
     /**
@@ -133,7 +171,4 @@ contract EbolaCoin is ERC20 {
         // transfer ETH to the caller
         payable(msg.sender).transfer(ethAmount);
     }
-
-
-    /// TODO use a linked list to determine who has already redeemed the code
 }

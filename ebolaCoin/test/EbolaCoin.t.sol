@@ -7,6 +7,7 @@ import {ERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.s
 
 
 contract EbolaCoinTest is Test {
+
     EbolaCoin public ebolaCoin;
     address public owner;
     uint initialSupply;
@@ -118,5 +119,41 @@ contract EbolaCoinTest is Test {
             ebolaCoin.balanceOf(owner) == 1000 * (10 ** uint256(ebolaCoin.decimals())), 
             "Owner EBC balance is not 1000 * (10 ** decimals()) tokens after converting to ETH"
         );
+    }
+
+    /**
+    * @notice This test ensures that users who have already redeemed the code cannot redeem it again
+    * @dev the mechanism being tested is the linked list / node mappings that keep track of who has 
+     */
+    function testRedemptionCheck() public {
+
+        // initial code should be 0 after construction
+        uint code = 0; 
+
+        // after redeeming the code, owner should have 5 * (10 ** decimals()) tokens
+        vm.prank(owner);
+
+        // Owner redeems the initial code
+        ebolaCoin.redeemCode(code);
+
+        // new codes and numRedemptions are chosen by the owner
+        uint newCode = 1;
+        uint8 numRedemptions = 1;
+
+        // expect a revert when owner tries to reset the code within 1 week of the last reset
+        bytes memory expectedRevertReason = abi.encodePacked("Code can only be reset once per week");
+        vm.expectRevert(expectedRevertReason);
+        vm.prank(owner);
+        ebolaCoin.setCode(newCode, numRedemptions);
+
+
+        // warp time 8 days later to allow owner to set new code
+        vm.warp(1 weeks + 1 days);
+
+        // owner sets new code
+        vm.prank(owner);
+        ebolaCoin.setCode(newCode, numRedemptions); // should not revert
+
+
     }
 }
