@@ -7,12 +7,15 @@ contract EbolaCoin is ERC20 {
     
     address public immutable owner;
 
-    /// @dev code can be used to redeem tokens numRedemptions times before being reset
+    /// @dev the code can be used to redeem tokens numRedemptions times before being reset
     uint private code;
     uint8 private numRedemptions;
 
     /// @dev resetTime is the time at which the owner most recently reset the code and number of redemptions
     uint private resetTime;
+
+    /// @dev conversionRateETH is the number of tokens that can be purchased with 1 ETH
+    uint public immutable conversionRateETH = 1000;
 
     /**
     * @notice EbolaCoin is constructed as an ERC20 token with the name "EbolaCoin" and the symbol "EBC"
@@ -49,6 +52,9 @@ contract EbolaCoin is ERC20 {
     }
 
     /// @notice only owner function to mint mint more tokens to the contract
+    /// @dev new tokens are only minted to the contract, not to the owner. The only way for an 
+    /// externally owned account to recieve tokens is either by redeeming the code or by purchasing 
+    /// them.
     function mint(uint256 amount) public onlyOwner {
 
         // mint new tokens to the contract balance
@@ -90,6 +96,42 @@ contract EbolaCoin is ERC20 {
 
         // transfer 5 tokens to the caller
         _transfer(address(this), msg.sender, 5 * (10 ** uint256(decimals())));   
+    }
+
+    /**
+    * @notice ETH can be converted to EbolaCoin tokens at a rate of 1000 tokens per ETH
+    * @dev the conversion of Eth to EBC is done with the followiung formula:
+    * Token Amount = wei * ((conversionRateETH / 10^18) / 10^6) = wei * (conversionRateETH / 10^12)
+    * Where 10^18 is the number of wei in 1 ETH and 10^6 is the number of decimals in EBC
+     */
+    function convertETHtoEBC() public payable {
+
+        // convert msg.value to tokens
+        uint256 amount = conversionRateETH * (msg.value / (10 ** 12));
+
+        // transfer tokens to the caller
+        _transfer(address(this), msg.sender, amount);
+    }
+
+    /// @notice EbolaCoin tokens can be converted to ETH at a rate of 1000 tokens per ETH
+    /// @dev amount needs to already have been multiplied by 10^decimals()
+    function convertEBCtoETH(uint256 amount) public {
+
+        // convert tokens to ETH
+        uint256 ethAmount = amount  / conversionRateETH;
+
+        // require the contract to have the amount of ETH required to convert
+        require(
+            address(this).balance >= ethAmount, 
+            "Contract does not have enough ETH to run EBC->ETH conversion"
+            );
+
+        // transfer tokens from the caller to the contract
+        _transfer(msg.sender, address(this), amount);
+
+
+        // transfer ETH to the caller
+        payable(msg.sender).transfer(ethAmount);
     }
 
 
